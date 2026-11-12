@@ -1,0 +1,41 @@
+name: PR
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number || github.head_ref }}
+  cancel-in-progress: true
+
+# This repository is public, and the organisation's runner groups do not serve
+# public repositories, so every job runs on GitHub's hosted runners.
+jobs:
+  secret-scan:
+    # gitleaks, per compliance procedure PROC-SS-001, through the shared
+    # workflow in solidafy/.github.
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: solidafy/.github/.github/workflows/reusable-secret-scan.yaml@main
+    # Only the license the scan needs, never inherit: the workflow tracks @main.
+    secrets:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # The single required status check next to Solidafy Code Review. It lists
+  # every other job, and reads their results directly: at step level
+  # `failure()` only sees this job's own earlier steps, of which there are none.
+  branch-protection:
+    name: Branch Protection
+    runs-on: ubuntu-latest
+    needs:
+      - secret-scan
+    if: always()
+    permissions: {}
+    steps:
+      # success passes, skipped passes, failure fails, cancelled fails.
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "Branch protection failed: needs results = ${{ join(needs.*.result, ', ') }}"
+          exit 1
